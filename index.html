@@ -4576,12 +4576,16 @@
             <select id="propuestas-coverage-mode" onchange="actualizarOpcionesDoblesPropuestas()">
               <option value="reduced_13" selected>🎯 Sistema Reducido al 13 (Recomendado: Máximo Ahorro &amp; Cobertura)</option>
               <option value="auto_smart">🧠 Auto Inteligente (Boletos Directos con Dobles/Triples)</option>
-              <option value="manual_doubles">⚙️ Manual (Solo Dobles Directos)</option>
+              <option value="manual_doubles">⚙️ Manual (Dobles y Triples Directos)</option>
             </select>
           </div>
           <div class="propuestas-field" id="propuestas-doubles-wrap" style="display:none">
             <label for="propuestas-doubles">Dobles Fijos por Boleto</label>
-            <select id="propuestas-doubles" onchange="actualizarVistaPreviaPropuestas()"></select>
+            <select id="propuestas-doubles" onchange="onDoubleComboChange()"></select>
+          </div>
+          <div class="propuestas-field" id="propuestas-triples-wrap" style="display:none">
+            <label for="propuestas-triples">Triples Fijos por Boleto</label>
+            <select id="propuestas-triples" onchange="onTripleComboChange()"></select>
           </div>
           <div class="propuestas-field">
             <label for="propuestas-strategy">Estrategia Matemática</label>
@@ -8044,25 +8048,23 @@ function actualizarOpcionesDoblesPropuestas(preferredValue) {
   const covModeSelect = document.getElementById('propuestas-coverage-mode');
   const covMode = covModeSelect ? covModeSelect.value : 'auto_smart';
   const doublesWrap = document.getElementById('propuestas-doubles-wrap');
-  const select = document.getElementById('propuestas-doubles');
+  const triplesWrap = document.getElementById('propuestas-triples-wrap');
+  const dSelect = document.getElementById('propuestas-doubles');
+  const tSelect = document.getElementById('propuestas-triples');
 
   if (covMode === 'auto_smart' || covMode === 'reduced_13') {
     if (doublesWrap) doublesWrap.style.display = 'none';
-    if (select) select.disabled = true;
+    if (triplesWrap) triplesWrap.style.display = 'none';
+    if (dSelect) dSelect.disabled = true;
+    if (tSelect) tSelect.disabled = true;
   } else {
     if (doublesWrap) doublesWrap.style.display = 'flex';
-    if (select) select.disabled = false;
+    if (triplesWrap) triplesWrap.style.display = 'flex';
+    if (dSelect) dSelect.disabled = false;
+    if (tSelect) tSelect.disabled = false;
   }
 
-  const budget = Math.floor(Number(document.getElementById('propuestas-budget').value));
   const tableKey = document.getElementById('propuestas-type').value;
-  const previous = preferredValue ?? (select && select.value !== '' ? Number(select.value) : null);
-  let mainBudget = budget;
-  let revBudget = budget;
-  if (tableKey === 'both') {
-    mainBudget = Math.max(MAIN_TICKET_COST, Math.floor((budget / 2) / MAIN_TICKET_COST) * MAIN_TICKET_COST);
-    revBudget = budget - mainBudget;
-  }
 
   let mainManualDoubles = 0;
   let mainManualTriples = 0;
@@ -8084,31 +8086,152 @@ function actualizarOpcionesDoblesPropuestas(preferredValue) {
   }
 
   const minDoubles = tableKey === 'both' ? Math.max(mainManualDoubles, revManualDoubles) : tableKey === 'rev' ? revManualDoubles : mainManualDoubles;
+  const minTriples = tableKey === 'both' ? Math.max(mainManualTriples, revManualTriples) : tableKey === 'rev' ? revManualTriples : mainManualTriples;
+
+  if (covMode === 'manual_doubles') {
+    // 1. Obtener los triples actuales seleccionados (o minTriples por defecto si está vacío)
+    let currentTriples = tSelect && tSelect.value !== '' ? Number(tSelect.value) : minTriples;
+    
+    // 2. Rellenar dobles basándonos en esa cantidad de triples
+    rellenarComboDobles(currentTriples, minDoubles, mainManualTriples, revManualTriples);
+
+    // 3. Obtener el valor de dobles resultante seleccionado
+    let currentDoubles = dSelect && dSelect.value !== '' ? Number(dSelect.value) : minDoubles;
+
+    // 4. Rellenar triples basándonos en ese valor de dobles resultante
+    rellenarComboTriples(currentDoubles, minTriples, mainManualDoubles, revManualDoubles);
+  }
+
+  actualizarVistaPreviaPropuestas();
+}
+
+function rellenarComboDobles(selectedTriplesValue, minDoubles, mainManualTriples, revManualTriples) {
+  const select = document.getElementById('propuestas-doubles');
+  if (!select) return;
+
+  const budget = Math.floor(Number(document.getElementById('propuestas-budget').value));
+  const tableKey = document.getElementById('propuestas-type').value;
+  let mainBudget = budget;
+  let revBudget = budget;
+  if (tableKey === 'both') {
+    mainBudget = Math.max(MAIN_TICKET_COST, Math.floor((budget / 2) / MAIN_TICKET_COST) * MAIN_TICKET_COST);
+    revBudget = budget - mainBudget;
+  }
+
+  const previous = select.value !== '' ? Number(select.value) : null;
 
   const allowed = [];
   for (let doubles = minDoubles; doubles <= MAX_DOBLES_COBERTURA; doubles++) {
-    const mainAllowed = tableKey === 'rev' || (MAIN_TICKET_COST * Math.pow(2, doubles) <= mainBudget && validarCombinacionDoblesTriples(doubles, mainManualTriples));
-    const revAllowed = tableKey === 'main' || (REV_TICKET_COST * Math.pow(2, doubles) <= revBudget && validarCombinacionDoblesTriples(doubles, revManualTriples));
+    const mainAllowed = tableKey === 'rev' || (MAIN_TICKET_COST * Math.pow(2, doubles) * Math.pow(3, selectedTriplesValue) <= mainBudget && validarCombinacionDoblesTriples(doubles, selectedTriplesValue));
+    const revAllowed = tableKey === 'main' || (REV_TICKET_COST * Math.pow(2, doubles) * Math.pow(3, selectedTriplesValue) <= revBudget && validarCombinacionDoblesTriples(doubles, selectedTriplesValue));
     if (mainAllowed && revAllowed) allowed.push(doubles);
   }
 
-  if (select) {
-    select.innerHTML = '';
-    allowed.forEach(doubles => {
-      const option = document.createElement('option');
-      option.value = doubles;
-      const label = doubles === 0 ? 'Sin dobles' : doubles === 1 ? '1 doble' : doubles + ' dobles';
-      const cost = tableKey === 'both'
-        ? MAIN_TICKET_COST * Math.pow(2, doubles) + REV_TICKET_COST * Math.pow(2, doubles)
-        : getTicketBaseCost(tableKey) * Math.pow(2, doubles);
-      option.textContent = label + ' · ' + formatCurrency(cost);
-      select.appendChild(option);
-    });
-    if (covMode !== 'auto_smart' && covMode !== 'reduced_13') {
-      select.disabled = !allowed.length;
-    }
-    if (allowed.length) select.value = allowed.includes(previous) ? previous : allowed[allowed.length - 1];
+  select.innerHTML = '';
+  allowed.forEach(doubles => {
+    const option = document.createElement('option');
+    option.value = doubles;
+    const label = doubles === 0 ? 'Sin dobles' : doubles === 1 ? '1 doble' : doubles + ' dobles';
+    const cost = tableKey === 'both'
+      ? MAIN_TICKET_COST * Math.pow(2, doubles) * Math.pow(3, selectedTriplesValue) + REV_TICKET_COST * Math.pow(2, doubles) * Math.pow(3, selectedTriplesValue)
+      : getTicketBaseCost(tableKey) * Math.pow(2, doubles) * Math.pow(3, selectedTriplesValue);
+    option.textContent = label + ' · ' + formatCurrency(cost);
+    select.appendChild(option);
+  });
+
+  if (allowed.length) {
+    select.value = allowed.includes(previous) ? previous : allowed[0];
   }
+}
+
+function rellenarComboTriples(selectedDoublesValue, minTriples, mainManualDoubles, revManualDoubles) {
+  const select = document.getElementById('propuestas-triples');
+  if (!select) return;
+
+  const budget = Math.floor(Number(document.getElementById('propuestas-budget').value));
+  const tableKey = document.getElementById('propuestas-type').value;
+  let mainBudget = budget;
+  let revBudget = budget;
+  if (tableKey === 'both') {
+    mainBudget = Math.max(MAIN_TICKET_COST, Math.floor((budget / 2) / MAIN_TICKET_COST) * MAIN_TICKET_COST);
+    revBudget = budget - mainBudget;
+  }
+
+  const previous = select.value !== '' ? Number(select.value) : null;
+
+  const allowed = [];
+  for (let triples = minTriples; triples <= MAX_TRIPLES_COBERTURA; triples++) {
+    const mainAllowed = tableKey === 'rev' || (MAIN_TICKET_COST * Math.pow(2, selectedDoublesValue) * Math.pow(3, triples) <= mainBudget && validarCombinacionDoblesTriples(selectedDoublesValue, triples));
+    const revAllowed = tableKey === 'main' || (REV_TICKET_COST * Math.pow(2, selectedDoublesValue) * Math.pow(3, triples) <= revBudget && validarCombinacionDoblesTriples(selectedDoublesValue, triples));
+    if (mainAllowed && revAllowed) allowed.push(triples);
+  }
+
+  select.innerHTML = '';
+  allowed.forEach(triples => {
+    const option = document.createElement('option');
+    option.value = triples;
+    const label = triples === 0 ? 'Sin triples' : triples === 1 ? '1 triple' : triples + ' triples';
+    const cost = tableKey === 'both'
+      ? MAIN_TICKET_COST * Math.pow(2, selectedDoublesValue) * Math.pow(3, triples) + REV_TICKET_COST * Math.pow(2, selectedDoublesValue) * Math.pow(3, triples)
+      : getTicketBaseCost(tableKey) * Math.pow(2, selectedDoublesValue) * Math.pow(3, triples);
+    option.textContent = label + ' · ' + formatCurrency(cost);
+    select.appendChild(option);
+  });
+
+  if (allowed.length) {
+    select.value = allowed.includes(previous) ? previous : allowed[0];
+  }
+}
+
+function onDoubleComboChange() {
+  const dSelect = document.getElementById('propuestas-doubles');
+  if (!dSelect) return;
+  const dVal = Number(dSelect.value);
+
+  const tableKey = document.getElementById('propuestas-type').value;
+  let mainManualTriples = 0;
+  if (_propuestasBloqueos.main) {
+    Object.values(_propuestasBloqueos.main).forEach(v => {
+      const exp = expandPronostico(v);
+      if (exp.includes('T') || exp.length === 3) mainManualTriples++;
+    });
+  }
+  let revManualTriples = 0;
+  if (_propuestasBloqueos.rev) {
+    Object.values(_propuestasBloqueos.rev).forEach(v => {
+      const exp = expandPronostico(v);
+      if (exp.includes('T') || exp.length === 3) revManualTriples++;
+    });
+  }
+  const minTriples = tableKey === 'both' ? Math.max(mainManualTriples, revManualTriples) : tableKey === 'rev' ? revManualTriples : mainManualTriples;
+
+  rellenarComboTriples(dVal, minTriples);
+  actualizarVistaPreviaPropuestas();
+}
+
+function onTripleComboChange() {
+  const tSelect = document.getElementById('propuestas-triples');
+  if (!tSelect) return;
+  const tVal = Number(tSelect.value);
+
+  const tableKey = document.getElementById('propuestas-type').value;
+  let mainManualDoubles = 0;
+  if (_propuestasBloqueos.main) {
+    Object.values(_propuestasBloqueos.main).forEach(v => {
+      const exp = expandPronostico(v);
+      if (exp.length === 2) mainManualDoubles++;
+    });
+  }
+  let revManualDoubles = 0;
+  if (_propuestasBloqueos.rev) {
+    Object.values(_propuestasBloqueos.rev).forEach(v => {
+      const exp = expandPronostico(v);
+      if (exp.length === 2) revManualDoubles++;
+    });
+  }
+  const minDoubles = tableKey === 'both' ? Math.max(mainManualDoubles, revManualDoubles) : tableKey === 'rev' ? revManualDoubles : mainManualDoubles;
+
+  rellenarComboDobles(tVal, minDoubles);
   actualizarVistaPreviaPropuestas();
 }
 
@@ -8262,7 +8385,7 @@ function generarMatrizReducida(numDoubles, numTriples, maxTickets) {
  * Encuentra la combinación óptima de (Boletos, Dobles, Triples, Fijos)
  * que maximiza la probabilidad y certeza matemática con el presupuesto disponible.
  */
-function obtenerPlanPropuestas(rows, budget, maxTickets, tableKey = 'main', requestedDoubles, coverageMode = 'auto_smart', playerIndexes) {
+function obtenerPlanPropuestas(rows, budget, maxTickets, tableKey = 'main', requestedDoubles, coverageMode = 'auto_smart', playerIndexes, requestedTriples) {
   const baseCost = getTicketBaseCost(tableKey);
   const totalMatches = rows.length || (tableKey === 'rev' ? 7 : 14);
 
@@ -8280,17 +8403,18 @@ function obtenerPlanPropuestas(rows, budget, maxTickets, tableKey = 'main', requ
 
   if (coverageMode === 'manual_doubles') {
     const eligibleDoubleCount = Math.min(MAX_DOBLES_COBERTURA, totalMatches);
+    const targetTriples = requestedTriples !== undefined ? requestedTriples : manualTriples;
     for (let count = 1; count <= maxTickets; count++) {
       for (let doubles = manualDoubles; doubles <= eligibleDoubleCount; doubles++) {
         if (requestedDoubles !== undefined && doubles !== requestedDoubles) continue;
-        if (!validarCombinacionDoblesTriples(doubles, manualTriples)) continue;
-        const unitCost = baseCost * Math.pow(2, doubles) * Math.pow(3, manualTriples);
+        if (!validarCombinacionDoblesTriples(doubles, targetTriples)) continue;
+        const unitCost = baseCost * Math.pow(2, doubles) * Math.pow(3, targetTriples);
         const totalCost = count * unitCost;
         if (totalCost > budget) continue;
-        const fijos = totalMatches - doubles - manualTriples;
+        const fijos = totalMatches - doubles - targetTriples;
         const score = count * 1000 + doubles * 10;
         if (!best || score > best.score || (score === best.score && totalCost <= best.totalCost)) {
-          best = { count, doubles, triples: manualTriples, fijos, unitCost, totalCost, score, autoDoubles: doubles - manualDoubles, autoTriples: 0 };
+          best = { count, doubles, triples: targetTriples, fijos, unitCost, totalCost, score, autoDoubles: doubles - manualDoubles, autoTriples: targetTriples - manualTriples };
         }
       }
     }
@@ -8393,6 +8517,11 @@ function actualizarVistaPreviaPropuestas() {
     ? Number(doublesSelect.value)
     : undefined;
 
+  const triplesSelect = document.getElementById('propuestas-triples');
+  const requestedTriples = (covMode === 'manual_doubles' && triplesSelect && !triplesSelect.disabled && triplesSelect.value !== '')
+    ? Number(triplesSelect.value)
+    : undefined;
+
   const rows = type === 'rev' ? _revanchaRows : _mainRows;
   const manualMode = document.querySelector('input[name="propuestas-mode"]:checked');
   const selectedPlayers = manualMode && manualMode.value === 'manual' ? getSelectedProposalPlayers() : [];
@@ -8410,8 +8539,8 @@ function actualizarVistaPreviaPropuestas() {
     }
     const mainBudget = Math.max(MAIN_TICKET_COST, Math.floor((budget / 2) / MAIN_TICKET_COST) * MAIN_TICKET_COST);
     const revBudget = budget - mainBudget;
-    const mainPlan = obtenerPlanPropuestas(_mainRows, mainBudget, 10, 'main', requestedDoubles, covMode, playersForPlan);
-    const revPlan = obtenerPlanPropuestas(_revanchaRows, revBudget, 10, 'rev', requestedDoubles, covMode, playersForPlan);
+    const mainPlan = obtenerPlanPropuestas(_mainRows, mainBudget, 10, 'main', requestedDoubles, covMode, playersForPlan, requestedTriples);
+    const revPlan = obtenerPlanPropuestas(_revanchaRows, revBudget, 10, 'rev', requestedDoubles, covMode, playersForPlan, requestedTriples);
 
     if (mainPlan && revPlan) {
       const mainDesc = mainPlan.isReduced
@@ -8427,7 +8556,7 @@ function actualizarVistaPreviaPropuestas() {
     return;
   }
 
-  const plan = obtenerPlanPropuestas(rows, budget, 10, type, requestedDoubles, covMode, playersForPlan);
+  const plan = obtenerPlanPropuestas(rows, budget, 10, type, requestedDoubles, covMode, playersForPlan, requestedTriples);
   if (plan) {
     if (plan.isReduced) {
       const ahorroPct = plan.directCost ? Math.round((1 - (plan.totalCost / plan.directCost)) * 100) : 0;
@@ -8492,14 +8621,19 @@ function generarPropuestas() {
     ? Number(doublesSelect.value)
     : undefined;
 
+  const triplesSelect = document.getElementById('propuestas-triples');
+  const requestedTriples = (covMode === 'manual_doubles' && triplesSelect && !triplesSelect.disabled)
+    ? Number(triplesSelect.value)
+    : undefined;
+
   const mode = document.querySelector('input[name="propuestas-mode"]:checked').value;
   const playerIndexes = mode === 'manual'
     ? getSelectedProposalPlayers()
     : Array.from({ length: getOriginalParticipantCount() }, (_, idx) => idx);
   const minimumBudget = tableKey === 'both' ? MAIN_TICKET_COST + REV_TICKET_COST : getTicketBaseCost(tableKey);
 
-  if (covMode === 'manual_doubles' && (doublesSelect.disabled || !Number.isInteger(requestedDoubles))) {
-    showToast('El presupuesto no permite generar boletos con la selección de dobles', 'info');
+  if (covMode === 'manual_doubles' && (doublesSelect.disabled || triplesSelect.disabled || !Number.isInteger(requestedDoubles) || !Number.isInteger(requestedTriples))) {
+    showToast('El presupuesto no permite generar boletos con la selección de dobles y triples', 'info');
     return;
   }
   if (!Number.isFinite(budget) || budget < minimumBudget) {
@@ -8529,10 +8663,10 @@ function generarPropuestas() {
     try {
       guardarConfigPropuestas(budget, tableKey, strategy, mode, playerIndexes, requestedDoubles, covMode);
       if (tableKey === 'both') {
-        generarPropuestasAmbas(budget, playerIndexes, strategy, requestedDoubles, covMode);
+        generarPropuestasAmbas(budget, playerIndexes, strategy, requestedDoubles, covMode, requestedTriples);
       } else {
         const rows = tableKey === 'rev' ? _revanchaRows : _mainRows;
-        const proposals = optimizarPropuestas(rows, playerIndexes, budget, 10, strategy, tableKey, requestedDoubles, mode, covMode);
+        const proposals = optimizarPropuestas(rows, playerIndexes, budget, 10, strategy, tableKey, requestedDoubles, mode, covMode, requestedTriples);
         _lastPropuestasExport = [{ rows, proposals, tableKey }];
         document.getElementById('propuestas-export').disabled = false;
         renderPropuestas(rows, proposals, budget, tableKey);
@@ -8545,12 +8679,12 @@ function generarPropuestas() {
   }, 30);
 }
 
-function generarPropuestasAmbas(budget, playerIndexes, strategy, requestedDoubles, covMode = 'auto_smart') {
+function generarPropuestasAmbas(budget, playerIndexes, strategy, requestedDoubles, covMode = 'auto_smart', requestedTriples) {
   const mainBudget = Math.max(MAIN_TICKET_COST, Math.floor((budget / 2) / MAIN_TICKET_COST) * MAIN_TICKET_COST);
   const revBudget = budget - mainBudget;
   const mode = document.querySelector('input[name="propuestas-mode"]:checked').value;
-  const mainProposals = optimizarPropuestas(_mainRows, playerIndexes, mainBudget, 10, strategy, 'main', requestedDoubles, mode, covMode);
-  const revProposals = optimizarPropuestas(_revanchaRows, playerIndexes, revBudget, 10, strategy, 'rev', requestedDoubles, mode, covMode);
+  const mainProposals = optimizarPropuestas(_mainRows, playerIndexes, mainBudget, 10, strategy, 'main', requestedDoubles, mode, covMode, requestedTriples);
+  const revProposals = optimizarPropuestas(_revanchaRows, playerIndexes, revBudget, 10, strategy, 'rev', requestedDoubles, mode, covMode, requestedTriples);
   const mainCost = mainProposals.reduce((sum, proposal) => sum + proposal.cost, 0);
   const revCost = revProposals.reduce((sum, proposal) => sum + proposal.cost, 0);
 
@@ -8689,8 +8823,8 @@ function construirBoletosReducidos(items, tableKey, bestPlan, strategy) {
   return tickets;
 }
 
-function optimizarPropuestas(rows, playerIndexes, budget, maxTickets, strategy = 'balanced', tableKey = 'main', requestedDoubles, mode = 'auto', covMode = 'auto_smart') {
-  const bestPlan = obtenerPlanPropuestas(rows, budget, maxTickets, tableKey, requestedDoubles, covMode, playerIndexes);
+function optimizarPropuestas(rows, playerIndexes, budget, maxTickets, strategy = 'balanced', tableKey = 'main', requestedDoubles, mode = 'auto', covMode = 'auto_smart', requestedTriples) {
+  const bestPlan = obtenerPlanPropuestas(rows, budget, maxTickets, tableKey, requestedDoubles, covMode, playerIndexes, requestedTriples);
   if (!bestPlan) return [];
 
   const items = obtenerProbabilidadesPartidos(rows, playerIndexes, tableKey);
